@@ -8,9 +8,19 @@ on:
         required: true
         default: ''
         type: string
-      zip_url:
-        description: 'url to zip of json'
+      config_b64:
+        description: 'base64-encoded JSON of client config (server, key, appname, custom, ...)'
         required: true
+        default: ''
+        type: string
+      icon_b64:
+        description: 'base64-encoded PNG icon (optional)'
+        required: false
+        default: ''
+        type: string
+      logo_b64:
+        description: 'base64-encoded PNG logo (optional)'
+        required: false
         default: ''
         type: string
 
@@ -39,21 +49,15 @@ env:
   MACOS_P12_BASE64: "${{ secrets.MACOS_P12_BASE64 }}"
   UPLOAD_ARTIFACT: 'true'
   SIGN_BASE_URL: "${{ secrets.SIGN_BASE_URL }}"
-  STATUS_URL: "${{ secrets.GENURL }}/updategh"
 
 jobs:
-  setup:
-    uses: ./.github/workflows/fetch-encrypted-secrets.yml
-    with:
-      zip_url_json: ${{ inputs.zip_url }}
-
   generate-bridge-linux:
     uses: ./.github/workflows/bridge.yml
     with:
       version: ${{ inputs.version }}
 
   build-rustdesk-linux:
-    needs: [generate-bridge-linux, setup]
+    needs: [generate-bridge-linux]
     name: build rustdesk linux ${{ matrix.job.target }}
     runs-on: ${{ matrix.job.on }}
     strategy:
@@ -81,14 +85,16 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         
-      - uses: actions/download-artifact@v4
-        with:
-          name: encrypted-secrets-zip
-
-      - name: Load Secrets
-        uses: ./.github/actions/decrypt-secrets
-        with:
-          zip_password: ${{ secrets.ZIP_PASSWORD }}
+      - name: Decode client configuration
+        shell: python
+        run: |
+          import base64, json, os
+          config = json.loads(base64.b64decode("${{ inputs.config_b64 }}").decode("utf-8"))
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              for k, v in config.items():
+                  if v:
+                      print(f"::add-mask::{v}")
+                      f.write(f"{k}={v}\n")
 
       - name: Export GitHub Actions cache environment variables
         uses: actions/github-script@v6
@@ -96,16 +102,6 @@ jobs:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-
-      - name: Set rdgen value
-        if: ${{ env.rdgen == 'true' }}
-        run: |
-          echo "STATUS_URL=${{ secrets.GENURL }}/updategh" >> $GITHUB_ENV
-
-      - name: Set rdgen value
-        if: ${{ env.rdgen == 'false' }}
-        run: |
-          echo "STATUS_URL=${{ env.apiServer }}/api/updategh" >> $GITHUB_ENV
 
       - name: Maximize build space
         run: |
@@ -212,7 +208,7 @@ jobs:
         shell: bash
 
       - name: icon stuff
-        if: ${{ env.iconlink_url != 'false' }}
+        if: ${{ inputs.icon_b64 != '' }}
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 5
@@ -223,7 +219,7 @@ jobs:
             mv ./res/icon.ico ./res/icon.ico.bak
             mv ./res/icon.png ./res/icon.png.bak
             mv ./res/tray-icon.ico ./res/tray-icon.ico.bak
-            wget -O ./res/icon.png ${{ env.iconlink_url }}/get_png?filename=${{ env.iconlink_file }}"&"uuid=${{ env.iconlink_uuid }}
+            base64 -d <<< "${{ inputs.icon_b64 }}" > ./res/icon.png
             mv ./res/32x32.png ./res/32x32.png.bak
             mv ./res/64x64.png ./res/64x64.png.bak
             mv ./res/128x128.png ./res/128x128.png.bak
@@ -558,10 +554,10 @@ jobs:
             export DEB_ARCH=${{ matrix.job.deb_arch }}
             mkdir -p flutter/tmpdeb/usr/share/rustdesk
             cp ./custom_.txt ./flutter/tmpdeb/usr/share/rustdesk/custom_.txt
-            if [[ "${{ env.logolink_url }}" != "false" ]]; then
-              wget -O ./flutter/assets/logo.png ${{ env.logolink_url }}/get_png?filename=${{ env.logolink_file }}"&"uuid=${{ env.logolink_uuid }}
+            if [[ -n "${{ inputs.logo_b64 }}" ]]; then
+              base64 -d <<< "${{ inputs.logo_b64 }}" > ./flutter/assets/logo.png
             fi
-            if [[ "${{ env.iconlink_url }}" != "false" ]]; then
+            if [[ -n "${{ inputs.icon_b64 }}" ]]; then
               mv ./flutter/assets/icon.svg ./flutter/assets/icon.svg.bak
               convert ./res/icon.png ./flutter/assets/icon.svg
               convert ./res/128x128.png -resize 200% ./flutter/assets/128x128@2x.png || true
@@ -690,33 +686,16 @@ jobs:
         run: |
           cp ./res/rustdesk-${{ env.VERSION }}-0-x86_64.pkg.tar.zst ./output/${{ env.filename }}-${{ matrix.job.arch }}.pkg.tar.zst
 
-      - name: send file to rdgen server
-        if: ${{ env.rdgen == 'true' }}
-        uses: nick-fields/retry@v3
+      - name: Upload built packages
+        uses: actions/upload-artifact@v4
         with:
-          timeout_minutes: 10
-          max_attempts: 3
-          retry_wait_seconds: 15
-          shell: bash
-          command: |
-            curl -i -X POST -H "Content-Type: multipart/form-data" -H "Authorization: Bearer ${{ env.token }}" -F "file=@./output/${{ env.filename }}-${{ matrix.job.arch }}.deb" -F "uuid=${{ env.uuid }}" ${{ secrets.GENURL }}/save_custom_client
-            curl -i -X POST -H "Content-Type: multipart/form-data" -H "Authorization: Bearer ${{ env.token }}" -F "file=@./output/${{ env.filename }}-${{ matrix.job.arch }}.rpm" -F "uuid=${{ env.uuid }}" ${{ secrets.GENURL }}/save_custom_client
-            curl -i -X POST -H "Content-Type: multipart/form-data" -H "Authorization: Bearer ${{ env.token }}" -F "file=@./output/${{ env.filename }}-suse-${{ matrix.job.arch }}.rpm" -F "uuid=${{ env.uuid }}" ${{ secrets.GENURL }}/save_custom_client
-            curl -i -X POST -H "Content-Type: multipart/form-data" -H "Authorization: Bearer ${{ env.token }}" -F "file=@./output/${{ env.filename }}-${{ matrix.job.arch }}.pkg.tar.zst" -F "uuid=${{ env.uuid }}" ${{ secrets.GENURL }}/save_custom_client || true
-
-      - name: send file to api server
-        if: ${{ env.rdgen == 'false' }}
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 10
-          max_attempts: 3
-          retry_wait_seconds: 15
-          shell: bash
-          command: |
-            curl -i -X POST -H "Content-Type: multipart/form-data" -H "Authorization: Bearer ${{ env.token }}" -F "file=@./output/${{ env.filename }}-${{ matrix.job.arch }}.deb" ${{ env.apiServer }}/api/save_custom_client
-            curl -i -X POST -H "Content-Type: multipart/form-data" -H "Authorization: Bearer ${{ env.token }}" -F "file=@./output/${{ env.filename }}-${{ matrix.job.arch }}.rpm" ${{ env.apiServer }}/api/save_custom_client
-            curl -i -X POST -H "Content-Type: multipart/form-data" -H "Authorization: Bearer ${{ env.token }}" -F "file=@./output/${{ env.filename }}-suse-${{ matrix.job.arch }}.rpm" ${{ env.apiServer }}/api/save_custom_client
-            curl -i -X POST -H "Content-Type: multipart/form-data" -H "Authorization: Bearer ${{ env.token }}" -F "file=@./output/${{ env.filename }}-${{ matrix.job.arch }}.pkg.tar.zst" ${{ env.apiServer }}/api/save_custom_client || true
+          name: ${{ env.filename }}-${{ matrix.job.arch }}-packages
+          path: |
+            ./output/${{ env.filename }}-${{ matrix.job.arch }}.deb
+            ./output/${{ env.filename }}-${{ matrix.job.arch }}.rpm
+            ./output/${{ env.filename }}-suse-${{ matrix.job.arch }}.rpm
+            ./output/${{ env.filename }}-${{ matrix.job.arch }}.pkg.tar.zst
+          if-no-files-found: ignore
 
       - name: Upload deb
         uses: actions/upload-artifact@master
@@ -726,7 +705,7 @@ jobs:
           path: ./output/${{ env.filename }}-${{ matrix.job.arch }}.deb
 
   build-rustdesk-linux-drm:
-    needs: [generate-bridge-linux, setup]
+    needs: [generate-bridge-linux]
     name: build rustdesk linux drm x86_64
     runs-on: ubuntu-22.04
     # Only rustdesk's master branch carries the drm/libdrmtap support this job
@@ -742,14 +721,16 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         
-      - uses: actions/download-artifact@v4
-        with:
-          name: encrypted-secrets-zip
-
-      - name: Load Secrets
-        uses: ./.github/actions/decrypt-secrets
-        with:
-          zip_password: ${{ secrets.ZIP_PASSWORD }}
+      - name: Decode client configuration
+        shell: python
+        run: |
+          import base64, json, os
+          config = json.loads(base64.b64decode("${{ inputs.config_b64 }}").decode("utf-8"))
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              for k, v in config.items():
+                  if v:
+                      print(f"::add-mask::{v}")
+                      f.write(f"{k}={v}\n")
 
       - name: Export GitHub Actions cache environment variables
         uses: actions/github-script@v6
@@ -757,16 +738,6 @@ jobs:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-
-      - name: Set rdgen value
-        if: ${{ env.rdgen == 'true' }}
-        run: |
-          echo "STATUS_URL=${{ secrets.GENURL }}/updategh" >> $GITHUB_ENV
-
-      - name: Set rdgen value
-        if: ${{ env.rdgen == 'false' }}
-        run: |
-          echo "STATUS_URL=${{ env.apiServer }}/api/updategh" >> $GITHUB_ENV
 
       - name: Maximize build space
         run: |
@@ -870,7 +841,7 @@ jobs:
         shell: bash
 
       - name: icon stuff
-        if: ${{ env.iconlink_url != 'false' }}
+        if: ${{ inputs.icon_b64 != '' }}
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 5
@@ -881,7 +852,7 @@ jobs:
             mv ./res/icon.ico ./res/icon.ico.bak
             mv ./res/icon.png ./res/icon.png.bak
             mv ./res/tray-icon.ico ./res/tray-icon.ico.bak
-            wget -O ./res/icon.png ${{ env.iconlink_url }}/get_png?filename=${{ env.iconlink_file }}"&"uuid=${{ env.iconlink_uuid }}
+            base64 -d <<< "${{ inputs.icon_b64 }}" > ./res/icon.png
             mv ./res/32x32.png ./res/32x32.png.bak
             mv ./res/64x64.png ./res/64x64.png.bak
             mv ./res/128x128.png ./res/128x128.png.bak
@@ -1175,10 +1146,10 @@ jobs:
             export DEB_ARCH=amd64
             mkdir -p flutter/tmpdeb/usr/share/rustdesk
             cp ./custom_.txt ./flutter/tmpdeb/usr/share/rustdesk/custom_.txt
-            if [[ "${{ env.logolink_url }}" != "false" ]]; then
-              wget -O ./flutter/assets/logo.png ${{ env.logolink_url }}/get_png?filename=${{ env.logolink_file }}"&"uuid=${{ env.logolink_uuid }}
+            if [[ -n "${{ inputs.logo_b64 }}" ]]; then
+              base64 -d <<< "${{ inputs.logo_b64 }}" > ./flutter/assets/logo.png
             fi
-            if [[ "${{ env.iconlink_url }}" != "false" ]]; then
+            if [[ -n "${{ inputs.icon_b64 }}" ]]; then
               mv ./flutter/assets/icon.svg ./flutter/assets/icon.svg.bak
               convert ./res/icon.png ./flutter/assets/icon.svg
               convert ./res/128x128.png -resize 200% ./flutter/assets/128x128@2x.png || true
@@ -1226,28 +1197,6 @@ jobs:
               mv "$name" /workspace/output/"${{ env.filename }}-unattended-wayland-x86_64.deb"
             done
 
-      - name: send file to rdgen server
-        if: ${{ env.rdgen == 'true' && env.DRM_SUPPORTED == 'true' }}
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 10
-          max_attempts: 3
-          retry_wait_seconds: 15
-          shell: bash
-          command: |
-            curl -i -X POST -H "Content-Type: multipart/form-data" -H "Authorization: Bearer ${{ env.token }}" -F "file=@./output/${{ env.filename }}-unattended-wayland-x86_64.deb" -F "uuid=${{ env.uuid }}" ${{ secrets.GENURL }}/save_custom_client
-
-      - name: send file to api server
-        if: ${{ env.rdgen == 'false' && env.DRM_SUPPORTED == 'true' }}
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 10
-          max_attempts: 3
-          retry_wait_seconds: 15
-          shell: bash
-          command: |
-            curl -i -X POST -H "Content-Type: multipart/form-data" -H "Authorization: Bearer ${{ env.token }}" -F "file=@./output/${{ env.filename }}-unattended-wayland-x86_64.deb" ${{ env.apiServer }}/api/save_custom_client
-
       - name: Upload deb
         uses: actions/upload-artifact@master
         if: ${{ env.UPLOAD_ARTIFACT == 'true' && env.DRM_SUPPORTED == 'true' }}
@@ -1269,14 +1218,16 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         
-      - uses: actions/download-artifact@v4
-        with:
-          name: encrypted-secrets-zip
-
-      - name: Load Secrets
-        uses: ./.github/actions/decrypt-secrets
-        with:
-          zip_password: ${{ secrets.ZIP_PASSWORD }}
+      - name: Decode client configuration
+        shell: python
+        run: |
+          import base64, json, os
+          config = json.loads(base64.b64decode("${{ inputs.config_b64 }}").decode("utf-8"))
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              for k, v in config.items():
+                  if v:
+                      print(f"::add-mask::{v}")
+                      f.write(f"{k}={v}\n")
 
       - name: Checkout source code
         if: ${{ env.VERSION != 'master' }}
@@ -1304,7 +1255,7 @@ jobs:
           mv ${{ env.filename }}-${{ matrix.job.arch }}.deb appimage/rustdesk.deb
 
       - name: icon stuff
-        if: ${{ env.iconlink_url != 'false' }}
+        if: ${{ inputs.icon_b64 != '' }}
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 5
@@ -1315,7 +1266,7 @@ jobs:
             mv ./res/icon.ico ./res/icon.ico.bak
             mv ./res/icon.png ./res/icon.png.bak
             mv ./res/tray-icon.ico ./res/tray-icon.ico.bak
-            wget -O ./res/icon.png ${{ env.iconlink_url }}/get_png?filename=${{ env.iconlink_file }}"&"uuid=${{ env.iconlink_uuid }}
+            base64 -d <<< "${{ inputs.icon_b64 }}" > ./res/icon.png
             mv ./res/32x32.png ./res/32x32.png.bak
             mv ./res/64x64.png ./res/64x64.png.bak
             mv ./res/128x128.png ./res/128x128.png.bak
@@ -1375,27 +1326,11 @@ jobs:
           sudo mv "$src" "./$dest"
           popd
 
-      - name: send file to rdgen server
-        if: ${{ env.rdgen == 'true' }}
-        uses: nick-fields/retry@v3
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
         with:
-          timeout_minutes: 10
-          max_attempts: 3
-          retry_wait_seconds: 15
-          shell: bash
-          command: |
-            curl -i -X POST -H "Content-Type: multipart/form-data" -H "Authorization: Bearer ${{ env.token }}" -F "file=@./appimage/${{ env.filename }}-${{ matrix.job.arch }}.AppImage" -F "uuid=${{ env.uuid }}" ${{ secrets.GENURL }}/save_custom_client
-          
-      - name: send file to api server
-        if: ${{ env.rdgen == 'false' }}
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 10
-          max_attempts: 3
-          retry_wait_seconds: 15
-          shell: bash
-          command: |
-            curl -i -X POST -H "Content-Type: multipart/form-data" -H "Authorization: Bearer ${{ env.token }}" -F "file=@./appimage/${{ env.filename }}-${{ matrix.job.arch }}.AppImage" ${{ env.apiServer }}/api/save_custom_client
+          name: ${{ env.filename }}-${{ matrix.job.arch }}.AppImage
+          path: ./appimage/${{ env.filename }}-${{ matrix.job.arch }}.AppImage
 
   build-flatpak:
     name: Build flatpak ${{ matrix.job.target }}${{ matrix.job.suffix }}
@@ -1425,14 +1360,16 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         
-      - uses: actions/download-artifact@v4
-        with:
-          name: encrypted-secrets-zip
-
-      - name: Load Secrets
-        uses: ./.github/actions/decrypt-secrets
-        with:
-          zip_password: ${{ secrets.ZIP_PASSWORD }}
+      - name: Decode client configuration
+        shell: python
+        run: |
+          import base64, json, os
+          config = json.loads(base64.b64decode("${{ inputs.config_b64 }}").decode("utf-8"))
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              for k, v in config.items():
+                  if v:
+                      print(f"::add-mask::{v}")
+                      f.write(f"{k}={v}\n")
 
       - name: Checkout source code
         if: ${{ env.VERSION != 'master' }}
@@ -1514,77 +1451,9 @@ jobs:
             flatpak-builder --user --install-deps-from=flathub -y --force-clean --repo=repo ./build ./rustdesk.json
             flatpak build-bundle ./repo ${{ env.filename }}-${{ matrix.job.arch }}.flatpak "$BUNDLE_ID"
 
-      - name: send file to rdgen server
-        if: ${{ env.rdgen == 'true' }}
-        uses: nick-fields/retry@v3
+      - name: Upload flatpak
+        uses: actions/upload-artifact@v4
         with:
-          timeout_minutes: 10
-          max_attempts: 3
-          retry_wait_seconds: 15
-          shell: bash
-          command: |
-            curl -i -X POST -H "Content-Type: multipart/form-data" -H "Authorization: Bearer ${{ env.token }}" -F "file=@./flatpak/${{ env.filename }}-${{ matrix.job.arch }}.flatpak" -F "uuid=${{ env.uuid }}" ${{ secrets.GENURL }}/save_custom_client
-          
-      - name: send file to api server
-        if: ${{ env.rdgen == 'false' }}
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 10
-          max_attempts: 3
-          retry_wait_seconds: 15
-          shell: bash
-          command: |
-            curl -i -X POST -H "Content-Type: multipart/form-data" -H "Authorization: Bearer ${{ env.token }}" -F "file=@./flatpak/${{ env.filename }}-${{ matrix.job.arch }}.flatpak" ${{ env.apiServer }}/api/save_custom_client
+          name: ${{ env.filename }}-${{ matrix.job.arch }}.flatpak
+          path: ./flatpak/${{ env.filename }}-${{ matrix.job.arch }}.flatpak
 
-  deploy:
-    needs: [build-rustdesk-linux,build-flatpak,build-appimage]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        
-      - uses: actions/download-artifact@v4
-        with:
-          name: encrypted-secrets-zip
-
-      - name: Load Secrets
-        uses: ./.github/actions/decrypt-secrets
-        with:
-          zip_password: ${{ secrets.ZIP_PASSWORD }}
-
-      - name: Finalize and Cleanup zip/json
-        if: always() # Run even if previous steps fail
-        continue-on-error: true
-        uses: fjogeleit/http-request-action@v1
-        with:
-          url: "${{ secrets.GENURL }}/cleanzip"
-          method: 'POST'
-          customHeaders: '{"Content-Type": "application/json"}'
-          data: '{"uuid": "${{ env.uuid }}"}'
-
-      - name: Set rdgen value
-        if: ${{ env.rdgen == 'true' }}
-        run: |
-          echo "STATUS_URL=${{ secrets.GENURL }}/updategh" >> $GITHUB_ENV
-
-      - name: Set rdgen value
-        if: ${{ env.rdgen == 'false' }}
-        run: |
-          echo "STATUS_URL=${{ env.apiServer }}/api/updategh" >> $GITHUB_ENV
-
-      - uses: geekyeggo/delete-artifact@v5
-        continue-on-error: true
-        with:
-            name: ${{ env.filename }}-*.deb
-
-  cleanup:
-    needs: [build-rustdesk-linux,build-flatpak,build-appimage,deploy]
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    if: always()
-    steps:
-      - name: Delete secrets artifact
-        uses: geekyeggo/delete-artifact@v5
-        with:
-          name: encrypted-secrets-zip
