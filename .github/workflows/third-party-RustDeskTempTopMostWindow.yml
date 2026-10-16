@@ -48,25 +48,6 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v5
-        with:
-          name: encrypted-secrets-zip
-
-      - name: Load Secrets
-        uses: ./.github/actions/decrypt-secrets
-        with:
-          zip_password: ${{ secrets.ZIP_PASSWORD }}
-
-      - name: Finalize and Cleanup zip/json
-        if: always() # Run even if previous steps fail
-        continue-on-error: true
-        uses: fjogeleit/http-request-action@v1
-        with:
-          url: "${{ secrets.GENURL }}/cleanzip"
-          method: 'POST'
-          customHeaders: '{"Content-Type": "application/json"}'
-          data: '{"uuid": "${{ env.uuid }}"}'
-
       - name: Download the source code
         run: |
           git clone https://github.com/rustdesk-org/RustDeskTempTopMostWindow RustDeskTempTopMostWindow
@@ -84,13 +65,8 @@ jobs:
             cd RustDeskTempTopMostWindow
             git checkout ${{ inputs.rustdesk-version == '1.4.9' && 'ecd8d6a139eee76845ea66423fb739af450fda90' || '53b548a5398624f7149a382000397993542ad796' }}
             if ($LASTEXITCODE -ne 0) { throw "Failed to checkout privacy DLL source" }
-            if ($env:privacylink_url-ne "false") {
-              Invoke-WebRequest -Uri ${{ env.privacylink_url }}/get_png?filename=${{ env.privacylink_file }}"&"uuid=${{ env.privacylink_uuid }} -OutFile privacy.png
-              python "$env:GITHUB_WORKSPACE/.github/patches/privacyScreen.py"
-              if ($LASTEXITCODE -ne 0) { throw "Failed to convert privacy image" }
-              rm ./WindowInjection/img.cpp
-              mv img.cpp ./WindowInjection/img.cpp
-            }
+            # Custom privacy-screen image is not wired up in the CLI-only
+            # generator path yet; the DLL builds with its default image.
             msbuild ${{ env.project_path }} -p:Configuration=${{ inputs.configuration }} -p:Platform=${{ inputs.platform }} /p:TargetVersion=${{ inputs.target_version }}
 
       - name: Archive build artifacts
