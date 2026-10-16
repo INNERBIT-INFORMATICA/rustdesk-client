@@ -57,7 +57,6 @@ jobs:
       version: ${{ inputs.version }}
 
   build-RustDeskTempTopMostWindow:
-    needs: setup
     uses: ./.github/workflows/third-party-RustDeskTempTopMostWindow.yml
     with:
       rustdesk-version: ${{ inputs.version }}
