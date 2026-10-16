@@ -198,12 +198,17 @@ def main():
     p.add_argument('--remove-new-version-notif', action='store_true')
     p.add_argument('--default-manual', default='')
     p.add_argument('--override-manual', default='')
-    p.add_argument('--platform', choices=['windows', 'linux'], default='windows',
-                    help='macos/android are not wired up to this CLI-only path yet')
+    p.add_argument('--platform', choices=['windows', 'linux', 'macos', 'android'], default='windows',
+                    help='windows-x86 is not wired up to this CLI-only path yet')
     p.add_argument('--dry-run', action='store_true', help='print the gh command instead of running it')
     args = p.parse_args()
 
-    workflow = {'windows': 'generator-windows.yml', 'linux': 'generator-linux.yml'}[args.platform]
+    workflow = {
+        'windows': 'generator-windows.yml',
+        'linux': 'generator-linux.yml',
+        'macos': 'generator-macos.yml',
+        'android': 'generator-android.yml',
+    }[args.platform]
 
     config = build_config(args)
     config_b64 = base64.b64encode(json.dumps(config).encode('utf-8')).decode('ascii')
@@ -230,14 +235,17 @@ def main():
 
     subprocess.run(cmd, check=True)
     print(f"\nDispatched. Watch it with:\n  gh run list --repo {args.repo} --workflow {workflow} --limit 1")
-    if args.platform == 'windows':
-        print(f"Once it succeeds, download the build with:\n  gh run download <run-id> --repo {args.repo} -n {config['filename']}")
-    else:
-        print("Once it succeeds, list this run's artifacts with:\n"
-              f"  gh run view <run-id> --repo {args.repo}\n"
-              f"and download one with:\n  gh run download <run-id> --repo {args.repo} -n <artifact-name>\n"
-              f"(per-arch packages are named {config['filename']}-<arch>-packages, "
-              f"e.g. {config['filename']}-x86_64-packages)")
+    artifact_hints = {
+        'windows': config['filename'],
+        'linux': f"{config['filename']}-<arch>-packages (e.g. {config['filename']}-x86_64-packages), "
+                 f"plus {config['filename']}-<arch>.AppImage / .flatpak",
+        'macos': f"{config['filename']}-<arch>.dmg (arch: x86_64 or aarch64)",
+        'android': f"{config['filename']}-<arch>.apk (arch: aarch64, armv7 or x86_64)",
+    }
+    print("Once it succeeds, list this run's artifacts with:\n"
+          f"  gh run view <run-id> --repo {args.repo}\n"
+          f"and download one with:\n  gh run download <run-id> --repo {args.repo} -n <artifact-name>\n"
+          f"(artifact name pattern: {artifact_hints[args.platform]})")
 
 
 if __name__ == '__main__':

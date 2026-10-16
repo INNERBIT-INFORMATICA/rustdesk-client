@@ -8,9 +8,19 @@ on:
         required: true
         default: ''
         type: string
-      zip_url:
-        description: 'url to zip of json'
+      config_b64:
+        description: 'base64-encoded JSON of client config (server, key, appname, custom, ...)'
         required: true
+        default: ''
+        type: string
+      icon_b64:
+        description: 'base64-encoded PNG icon (optional)'
+        required: false
+        default: ''
+        type: string
+      logo_b64:
+        description: 'base64-encoded PNG logo (optional)'
+        required: false
         default: ''
         type: string
 
@@ -40,11 +50,6 @@ env:
   SIGN_BASE_URL: "${{ secrets.SIGN_BASE_URL }}"
 
 jobs:
-  setup:
-    uses: ./.github/workflows/fetch-encrypted-secrets.yml
-    with:
-      zip_url_json: ${{ inputs.zip_url }}
-
   generate-bridge:
     uses: ./.github/workflows/bridge.yml
     with:
@@ -53,7 +58,7 @@ jobs:
   build-for-macos:
     name: ${{ matrix.job.target }}
     runs-on: ${{ matrix.job.os }}
-    needs: [generate-bridge, setup]
+    needs: [generate-bridge]
     strategy:
       fail-fast: false
       matrix:
@@ -73,31 +78,20 @@ jobs:
               arch: aarch64,
               vcpkg-triplet: arm64-osx,
             }
-    env:
-      STATUS_URL: "${{ secrets.GENURL }}/updategh"
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-        
-      - uses: actions/download-artifact@v4
-        with:
-          name: encrypted-secrets-zip
 
-      - name: Load Secrets
-        uses: ./.github/actions/decrypt-secrets
-        with:
-          zip_password: ${{ secrets.ZIP_PASSWORD }}
-
-      - name: Finalize and Cleanup zip/json
-        if: always() # Run even if previous steps fail
-        continue-on-error: true
-        uses: fjogeleit/http-request-action@v1
-        with:
-          url: "${{ secrets.GENURL }}/cleanzip"
-          method: 'POST'
-          customHeaders: '{"Content-Type": "application/json"}'
-          data: '{"uuid": "${{ env.uuid }}"}'
+      - name: Decode client configuration
+        shell: python
+        run: |
+          import base64, json, os
+          config = json.loads(base64.b64decode("${{ inputs.config_b64 }}").decode("utf-8"))
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              for k, v in config.items():
+                  if v:
+                      print(f"::add-mask::{v}")
+                      f.write(f"{k}={v}\n")
 
       - name: Export GitHub Actions cache environment variables
         uses: actions/github-script@v6
@@ -319,7 +313,7 @@ jobs:
           prefix-key: ${{ matrix.job.os }}
 
       - name: Magick stuff for macOS
-        if: ${{ env.iconlink_url != 'false' }}
+        if: ${{ inputs.icon_b64 != '' }}
         continue-on-error: false
         shell: bash
         run: |
@@ -330,11 +324,8 @@ jobs:
           mkdir -p ./macos/Runner/Assets.xcassets/AppIcon.appiconset
           mkdir -p ./rustdesk/data/flutter_assets/assets
 
-          # Download icon using curl with additional SSL options
-          curl -k -L --tlsv1.2 --proto =https --ssl-reqd \
-            -H "User-Agent: Mozilla/5.0" \
-            "${{ env.iconlink_url }}/get_png?filename=${{ env.iconlink_file }}&uuid=${{ env.iconlink_uuid }}" \
-            -o ./res/icon.png || wget --no-check-certificate -O ./res/icon.png "${{ env.iconlink_url }}/get_png?filename=${{ env.iconlink_file }}&uuid=${{ env.iconlink_uuid }}"
+          # Decode icon from the base64 workflow input
+          base64 -d <<< "${{ inputs.icon_b64 }}" > ./res/icon.png
             
           # Backup existing files (if they exist)
           [ -f "./res/32x32.png" ] && mv ./res/32x32.png ./res/32x32.png.bak
@@ -429,7 +420,7 @@ jobs:
           ls -lh rustdesk/data/flutter_assets/assets/
 
       - name: replace flutter icons
-        if: ${{ env.iconlink_url != 'false' }}
+        if: ${{ inputs.icon_b64 != '' }}
         continue-on-error: false
         shell: bash
         run: |
@@ -453,7 +444,7 @@ jobs:
           cd ..
       
       - name: ui.rs
-        if: ${{ env.iconlink_url != 'false' }}
+        if: ${{ inputs.icon_b64 != '' }}
         continue-on-error: true
         shell: bash
         run: |
@@ -583,7 +574,7 @@ jobs:
           rustc -V
       
       - name: icon svg handling
-        if: ${{ env.iconlink_url != 'false' }}
+        if: ${{ inputs.icon_b64 != '' }}
         continue-on-error: false
         shell: bash
         run: |
@@ -599,19 +590,13 @@ jobs:
           rm ./temp_icon.pbm
 
       - name: logo handling
-        if: ${{ env.logolink_url != 'false' }}
+        if: ${{ inputs.logo_b64 != '' }}
         continue-on-error: false
         shell: bash
         run: |
           ASSETS_DIR="build/macos/Build/Products/Release/RustDesk.app/Contents/Frameworks/App.framework/Versions/Current/Resources/flutter_assets/assets"
           mkdir -p "$ASSETS_DIR"
-          curl -k -L --tlsv1.2 --proto =https --ssl-reqd \
-            -H "User-Agent: Mozilla/5.0" \
-            "${{ env.logolink_url }}/get_png?filename=${{ env.logolink_file }}&uuid=${{ env.logolink_uuid }}" \
-            -o "$ASSETS_DIR/logo.png" || \
-          wget --no-check-certificate \
-            -O "$ASSETS_DIR/logo.png" \
-            "${{ env.logolink_url }}/get_png?filename=${{ env.logolink_file }}&uuid=${{ env.logolink_uuid }}"
+          base64 -d <<< "${{ inputs.logo_b64 }}" > "$ASSETS_DIR/logo.png"
 
       - name: Sign macOS app bundle
         if: env.MACOS_P12_BASE64 != ''
@@ -744,35 +729,8 @@ jobs:
             exit 1
           fi
 
-      - name: send file to rdgen server
-        if: ${{ env.rdgen == 'true' }}
-        shell: bash
-        run: |
-          curl -i -X POST \
-            -H "Content-Type: multipart/form-data" \
-            -H "Authorization: Bearer ${{ env.token }}" \
-            -F "file=@$GITHUB_WORKSPACE/${{ env.filename }}-${{ matrix.job.arch }}.dmg" \
-            -F "uuid=${{ env.uuid }}" \
-            "${{ secrets.GENURL }}/save_custom_client"
-        
-
-      - name: send file to api server
-        if: ${{ env.rdgen == 'false' }}
-        shell: bash
-        run: |
-          curl -i -X POST \
-            -H "Content-Type: multipart/form-data" \
-            -H "Authorization: Bearer ${{ env.token }}" \
-            -F "file=@$GITHUB_WORKSPACE/${{ env.filename }}-${{ matrix.job.arch }}.dmg" \
-            "${{ env.apiServer }}/api/save_custom_client"
-
-  cleanup:
-    needs: [build-for-macos]
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    if: always()
-    steps:
-      - name: Delete secrets artifact
-        uses: geekyeggo/delete-artifact@v5
+      - name: Upload built client
+        uses: actions/upload-artifact@v4
         with:
-          name: encrypted-secrets-zip
+          name: ${{ env.filename }}-${{ matrix.job.arch }}.dmg
+          path: ./${{ env.filename }}-${{ matrix.job.arch }}.dmg
