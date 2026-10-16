@@ -1,6 +1,6 @@
 name: Custom Windows Client Generator
 run-name: Custom Windows Client Generator
-on: 
+on:
   workflow_dispatch:
     inputs:
       version:
@@ -8,9 +8,19 @@ on:
         required: true
         default: ''
         type: string
-      zip_url:
-        description: 'url to zip of json'
+      config_b64:
+        description: 'base64-encoded JSON of client config (server, key, appname, custom, ...)'
         required: true
+        default: ''
+        type: string
+      icon_b64:
+        description: 'base64-encoded PNG icon (optional)'
+        required: false
+        default: ''
+        type: string
+      logo_b64:
+        description: 'base64-encoded PNG logo (optional)'
+        required: false
         default: ''
         type: string
 
@@ -38,15 +48,9 @@ env:
   MACOS_P12_BASE64: "${{ secrets.MACOS_P12_BASE64 }}"
   UPLOAD_ARTIFACT: 'true'
   SIGN_BASE_URL: "${{ secrets.SIGN_BASE_URL }}"
-  STATUS_URL: "${{ secrets.GENURL }}/updategh"
 
 
 jobs:
-  setup:
-    uses: ./.github/workflows/fetch-encrypted-secrets.yml
-    with:
-      zip_url_json: ${{ inputs.zip_url }}
-
   generate-bridge:
     uses: ./.github/workflows/bridge.yml
     with:
@@ -68,7 +72,7 @@ jobs:
 
   build-for-windows-flutter:
     name: Build Windows
-    needs: [build-RustDeskTempTopMostWindow, generate-bridge, setup]
+    needs: [build-RustDeskTempTopMostWindow, generate-bridge]
     runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
@@ -88,25 +92,20 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-        
-      - uses: actions/download-artifact@v4
-        with:
-          name: encrypted-secrets-zip
 
-      - name: Load Secrets
-        uses: ./.github/actions/decrypt-secrets
-        with:
-          zip_password: ${{ secrets.ZIP_PASSWORD }}
-
-      - name: Finalize and Cleanup zip/json
-        if: always() # Run even if previous steps fail
-        continue-on-error: true
-        uses: fjogeleit/http-request-action@v1
-        with:
-          url: "${{ secrets.GENURL }}/cleanzip"
-          method: 'POST'
-          customHeaders: '{"Content-Type": "application/json"}'
-          data: '{"uuid": "${{ env.uuid }}"}'
+      - name: Decode client configuration
+        shell: pwsh
+        run: |
+          $json = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${{ inputs.config_b64 }}"))
+          $config = $json | ConvertFrom-Json
+          foreach ($prop in $config.PSObject.Properties) {
+            $name = $prop.Name
+            $value = $prop.Value
+            if ($value) {
+              Write-Output "::add-mask::$value"
+              Add-Content -Path $env:GITHUB_ENV -Value "$name=$value"
+            }
+          }
 
       - name: Export GitHub Actions cache environment variables
         uses: actions/github-script@v6
@@ -114,16 +113,6 @@ jobs:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-      
-      - name: Set rdgen value
-        if: ${{ env.rdgen == 'true' }}
-        run: |
-          echo "STATUS_URL=${{ secrets.GENURL }}/updategh" >> $env:GITHUB_ENV
-
-      - name: Set rdgen value
-        if: ${{ env.rdgen == 'false' }}
-        run: |
-          echo "STATUS_URL=${{ env.apiServer }}/api/updategh" >> $env:GITHUB_ENV
 
       - name: Checkout source code
         if: ${{ env.VERSION != 'master' }}
@@ -436,7 +425,7 @@ jobs:
         shell: bash
           
       - name: magick stuff
-        if: ${{ env.iconlink_url != 'false' }}
+        if: ${{ inputs.icon_b64 != '' }}
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 5
@@ -444,7 +433,7 @@ jobs:
           retry_wait_seconds: 15
           shell: pwsh
           command: |
-            Invoke-WebRequest -Uri ${{ env.iconlink_url }}/get_png?filename=${{ env.iconlink_file }}"&"uuid=${{ env.iconlink_uuid }} -OutFile ./res/iconx.png 
+            [IO.File]::WriteAllBytes("./res/iconx.png", [Convert]::FromBase64String("${{ inputs.icon_b64 }}"))
             mv ./res/icon.ico ./res/icon.ico.bak
             mv ./res/icon.png ./res/icon.png.bak
             mv ./res/tray-icon.ico ./res/tray-icon.ico.bak
@@ -465,7 +454,7 @@ jobs:
 
 
       - name: ui.rs icon
-        if: ${{ env.iconlink_url != 'false' }}
+        if: ${{ inputs.icon_b64 != '' }}
         continue-on-error: true
         shell: bash
         run: |
@@ -517,7 +506,7 @@ jobs:
       #           </security>' ./flutter/windows/runner/runner.exe.manifest
 
       - name: replace flutter icons
-        if: ${{ env.iconlink_url != 'false' }}
+        if: ${{ inputs.icon_b64 != '' }}
         continue-on-error: true
         run: |
           cd ./flutter
@@ -587,7 +576,7 @@ jobs:
           }
 
       - name: icon stuff
-        if: ${{ env.iconlink_url != 'false' }}
+        if: ${{ inputs.icon_b64 != '' }}
         continue-on-error: true
         run: |
           mv ./rustdesk/data/flutter_assets/assets/icon.svg ./rustdesk/data/flutter_assets/assets/icon.svg.bak
@@ -599,7 +588,7 @@ jobs:
           cp ./res/icon.ico ./rustdesk/data/flutter_assets/assets/icon.ico
 
       - name: logo stuff
-        if: ${{ env.logolink_url != 'false' }}
+        if: ${{ inputs.logo_b64 != '' }}
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 5
@@ -608,7 +597,7 @@ jobs:
           shell: pwsh
           continue_on_error: true
           command: |
-            Invoke-WebRequest -Uri ${{ env.logolink_url }}/get_png?filename=${{ env.logolink_file }}"&"uuid=${{ env.logolink_uuid }} -OutFile ./rustdesk/data/flutter_assets/assets/logo.png
+            [IO.File]::WriteAllBytes("./rustdesk/data/flutter_assets/assets/logo.png", [Convert]::FromBase64String("${{ inputs.logo_b64 }}"))
 
       - name: find Runner.res
         # Windows: find Runner.res (compiled from ./flutter/windows/runner/Runner.rc), copy to ./Runner.res
@@ -733,37 +722,11 @@ jobs:
         run: |
           mv ./SignOutput/rustdesk.msi "./SignOutput/${{ env.filename }}.msi" || echo "rustdesk"
 
-      - name: send file to rdgen server
-        if: ${{ env.rdgen == 'true' }}
-        uses: nick-fields/retry@v3
+      - name: Upload built client
+        uses: actions/upload-artifact@v4
         with:
-          timeout_minutes: 10
-          max_attempts: 3
-          retry_wait_seconds: 15
-          shell: bash
-          command: |
-            curl -i -X POST -H "Content-Type: multipart/form-data" -H "Authorization: Bearer ${{ env.token }}" -F "file=@./SignOutput/${{ env.filename }}.exe" -F "uuid=${{ env.uuid }}" ${{ secrets.GENURL }}/save_custom_client
-            curl -i -X POST -H "Content-Type: multipart/form-data" -H "Authorization: Bearer ${{ env.token }}" -F "file=@./SignOutput/${{ env.filename }}.msi" -F "uuid=${{ env.uuid }}" ${{ secrets.GENURL }}/save_custom_client || true
-
-      - name: send file to api server
-        if: ${{ env.rdgen == 'false' }}
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 10
-          max_attempts: 3
-          retry_wait_seconds: 15
-          shell: bash
-          command: |
-            curl -i -X POST -H "Content-Type: multipart/form-data" -H "Authorization: Bearer ${{ env.token }}" -F "file=@./SignOutput/${{ env.filename }}.exe" ${{ env.apiServer }}/api/save_custom_client
-            curl -i -X POST -H "Content-Type: multipart/form-data" -H "Authorization: Bearer ${{ env.token }}" -F "file=@./SignOutput/${{ env.filename }}.msi" ${{ env.apiServer }}/api/save_custom_client || true
-
-  cleanup:
-    needs: [build-for-windows-flutter]
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    if: always()
-    steps:
-      - name: Delete secrets artifact
-        uses: geekyeggo/delete-artifact@v5
-        with:
-          name: encrypted-secrets-zip
+          name: ${{ env.filename }}
+          path: |
+            ./SignOutput/${{ env.filename }}.exe
+            ./SignOutput/${{ env.filename }}.msi
+          if-no-files-found: warn
