@@ -1457,3 +1457,37 @@ jobs:
           name: ${{ env.filename }}-${{ matrix.job.arch }}.flatpak
           path: ./flatpak/${{ env.filename }}-${{ matrix.job.arch }}.flatpak
 
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-rustdesk-linux, build-rustdesk-linux-drm, build-appimage, build-flatpak]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Decode client configuration
+        shell: python
+        run: |
+          import base64, json, os
+          config = json.loads(base64.b64decode("${{ inputs.config_b64 }}").decode("utf-8"))
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              for k, v in config.items():
+                  if v:
+                      print(f"::add-mask::{v}")
+                      f.write(f"{k}={v}\n")
+
+      - name: Download built packages
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: "${{ env.filename }}*"
+          path: ./release-assets
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.filename }}-${{ inputs.version }}-${{ github.run_id }}
+          name: "${{ env.filename }} ${{ inputs.version }} (Linux)"
+          files: release-assets/**/*
+          fail_on_unmatched_files: false
+

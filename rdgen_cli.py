@@ -242,9 +242,16 @@ def main():
         'macos': f"{config['filename']}-<arch>.dmg (arch: x86_64 or aarch64)",
         'android': f"{config['filename']}-<arch>.apk (arch: aarch64, armv7 or x86_64)",
     }
-    print("Once it succeeds, list this run's artifacts with:\n"
+    print("Once it succeeds, a 'publish-release' job attaches the built files to a "
+          "GitHub Release (tag {filename}-{version}-<run-id>), downloadable with a stable "
+          "URL, e.g.:\n"
+          f"  https://github.com/{args.repo}/releases\n"
+          "\nOr, to list/download via gh instead:\n"
+          f"  gh release list --repo {args.repo}\n"
+          f"  gh release download <tag> --repo {args.repo}\n"
+          "\nArtifacts (90-day expiry) are still produced too, if you need those instead:\n"
           f"  gh run view <run-id> --repo {args.repo}\n"
-          f"and download one with:\n  gh run download <run-id> --repo {args.repo} -n <artifact-name>\n"
+          f"  gh run download <run-id> --repo {args.repo} -n <artifact-name>\n"
           f"(artifact name pattern: {artifact_hints[args.platform]})")
 
 
