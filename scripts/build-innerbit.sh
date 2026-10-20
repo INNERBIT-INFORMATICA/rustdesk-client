@@ -10,7 +10,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 exec python3 "$SCRIPT_DIR/../rdgen_cli.py" \
-  --repo Welington98/rustdesk-client \
+  --repo INNERBIT-INFORMATICA/rustdesk-client \
   --server rustdesk.innerbit.com.br \
   --key "ZMLOYLzSTnPmfaWMds0RMWHtXApkfLY+wSk5K5QuKIo=" \
   --filename innerbit-rustdesk \

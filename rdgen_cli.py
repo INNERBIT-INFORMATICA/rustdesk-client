@@ -21,7 +21,7 @@ fork (gh auth status).
 
 Example:
     python3 rdgen_cli.py \\
-        --repo Welington98/rdgen \\
+        --repo INNERBIT-INFORMATICA/rustdesk-client \\
         --server rustdesk.innerbit.com.br \\
         --key "ZMLOYLzSTnPmfaWMds0RMWHtXApkfLY+wSk5K5QuKIo=" \\
         --filename innerbit-rustdesk \\
@@ -164,7 +164,7 @@ def build_config(args):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('--repo', required=True, help='GitHub repo to dispatch against, e.g. Welington98/rdgen')
+    p.add_argument('--repo', required=True, help='GitHub repo to dispatch against, e.g. INNERBIT-INFORMATICA/rustdesk-client')
     p.add_argument('--ref', default='master', help='branch to run the workflow from')
     p.add_argument('--version', default='1.5.0', help='RustDesk version to build')
     p.add_argument('--filename', required=True, help='output exe/msi name (no spaces/special chars)')
