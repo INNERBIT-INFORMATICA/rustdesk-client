@@ -10,6 +10,12 @@ it together with the connection settings, and triggers the workflow with
 `gh workflow run`. Icon/logo files (if given) are embedded as base64
 inputs instead of being fetched over HTTP.
 
+GitHub caps the combined workflow_dispatch inputs at ~65,535 characters, so
+--icon/--logo must be small (base64 inflates size by ~4/3): a 128x128 PNG
+icon and a 160x160 PNG logo comfortably fit alongside the config. The
+generator workflows downscale the icon to at most 256px anyway, so there's
+no quality benefit to sending a larger source file.
+
 Requires: `gh` authenticated with `repo` + `workflow` scope for the target
 fork (gh auth status).
 
@@ -215,25 +221,44 @@ def main():
     icon_b64 = b64_file(args.icon)
     logo_b64 = b64_file(args.logo)
 
+    # Inputs go over stdin as JSON rather than -f/--raw-field: the base64
+    # icon/logo payloads can run into the megabytes, which blows past the
+    # OS argv size limit (OSError: Argument list too long) when passed as
+    # command-line arguments.
+    inputs = {
+        'version': args.version,
+        'config_b64': config_b64,
+        'icon_b64': icon_b64,
+        'logo_b64': logo_b64,
+    }
+
+    # GitHub rejects workflow_dispatch with HTTP 422 "inputs are too large"
+    # once the combined inputs exceed 65,535 characters. Catch it locally
+    # with a clear message instead of a confusing API error, and leave
+    # margin for the JSON wrapper (keys/braces/commas).
+    payload_size = sum(len(v) for v in inputs.values())
+    if payload_size > 65000:
+        print(f"error: combined workflow inputs are {payload_size} chars, over GitHub's "
+              "~65,535-char workflow_dispatch limit. Shrink --icon/--logo (e.g. resize to "
+              "128x128 / 160x160 PNG) and try again.", file=sys.stderr)
+        sys.exit(1)
+
     cmd = [
         'gh', 'workflow', 'run', workflow,
         '--repo', args.repo,
         '--ref', args.ref,
-        '-f', f'version={args.version}',
-        '-f', f'config_b64={config_b64}',
-        '-f', f'icon_b64={icon_b64}',
-        '-f', f'logo_b64={logo_b64}',
+        '--json',
     ]
 
     if args.dry_run:
-        print(' '.join(cmd[:6] + ['-f', 'version=...', '-f', 'config_b64=<%d chars>' % len(config_b64),
-                                   '-f', 'icon_b64=<%d chars>' % len(icon_b64),
-                                   '-f', 'logo_b64=<%d chars>' % len(logo_b64)]))
+        print(' '.join(cmd))
+        print("\nStdin payload sizes: version=%d config_b64=%d icon_b64=%d logo_b64=%d chars" % (
+            len(args.version), len(config_b64), len(icon_b64), len(logo_b64)))
         print("\nDecoded config:")
         print(json.dumps(config, indent=2))
         return
 
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, input=json.dumps(inputs).encode('utf-8'), check=True)
     print(f"\nDispatched. Watch it with:\n  gh run list --repo {args.repo} --workflow {workflow} --limit 1")
     artifact_hints = {
         'windows': config['filename'],
