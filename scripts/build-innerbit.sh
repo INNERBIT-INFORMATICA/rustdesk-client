@@ -15,7 +15,7 @@ exec python3 "$SCRIPT_DIR/../rdgen_cli.py" \
   --key "ZMLOYLzSTnPmfaWMds0RMWHtXApkfLY+wSk5K5QuKIo=" \
   --filename innerbit-support \
   --version 1.5.0 \
-  --appname "INNERbit" \
+  --appname "INNERbit Support" \
   --compname "INNERbit Informatica Ltda" \
   --accent-color B5021B \
   --icon "$SCRIPT_DIR/../branding/innerbit/icon.png" \

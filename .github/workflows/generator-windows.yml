@@ -665,11 +665,21 @@ jobs:
         shell: bash
         if: env.UPLOAD_ARTIFACT == 'true'
         run: |
+          # Spaces in appname are fine for display strings (patched into the
+          # UI/source separately), but this name also becomes the extraction
+          # directory and embedded exe path for the portable packer, so
+          # sanitize it the same way the MSI step already does below. Copy
+          # rather than rename so the space-named exe the MSI step expects
+          # still exists afterwards.
           mv "./rustdesk/rustdesk.exe" "./rustdesk/${{ env.appname }}.exe" || echo "rustdesk.exe"
+          myappname="$(echo "${{ env.appname }}" | tr ' ' '_')"
+          if [ "${{ env.appname }}" != "$myappname" ]; then
+            cp "./rustdesk/${{ env.appname }}.exe" "./rustdesk/${myappname}.exe"
+          fi
           sed -i '/dpiAware/d' res/manifest.xml
           pushd ./libs/portable
           pip3 install -r requirements.txt
-          python3 ./generate.py -f ../../rustdesk/ -o . -e "../../rustdesk/${{ env.appname }}.exe"
+          python3 ./generate.py -f ../../rustdesk/ -o . -e "../../rustdesk/${myappname}.exe"
           popd
           mkdir -p ./SignOutput
           mv ./target/release/rustdesk-portable-packer.exe "./SignOutput/rustdesk.exe"
