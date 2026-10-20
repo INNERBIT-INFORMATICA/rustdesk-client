@@ -168,6 +168,13 @@ jobs:
           sed -i '' -e "s|launchUrlString('https://rustdesk.com/privacy.html')|launchUrlString('${{ env.urlLink }}/privacy.html')|" ./flutter/lib/mobile/pages/settings_page.dart
           sed -i '' -e "s|https://rustdesk.com/privacy.html|${{ env.urlLink }}/privacy.html|" ./flutter/lib/desktop/pages/install_page.dart
 
+      - name: change accent color
+        if: env.accentColor != ''
+        continue-on-error: true
+        shell: bash
+        run: |
+          sed -i '' -e "s|0071FF|${{ env.accentColor }}|g" -e "s|2C8CFF|${{ env.accentColor }}|g" ./flutter/lib/common.dart
+
       - name: change download link to custom
         if: env.downloadLink != 'https://rustdesk.com/download'
         continue-on-error: true

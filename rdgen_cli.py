@@ -35,11 +35,19 @@ import subprocess
 import sys
 
 UNSAFE_NAME_CHARS = re.compile(r'[&\\|\'"$`\r\n]')
+HEX_COLOR = re.compile(r'^[0-9A-Fa-f]{6}$')
 
 
 def reject_unsafe(value, field):
     if value and UNSAFE_NAME_CHARS.search(value):
         print(f"error: --{field} contains unsupported characters (& \\ | ' \" $ `, newlines)", file=sys.stderr)
+        sys.exit(1)
+    return value
+
+
+def validate_hex_color(value, field):
+    if value and not HEX_COLOR.match(value):
+        print(f"error: --{field} must be 6 hex digits (e.g. B5021B), got: '{value}'", file=sys.stderr)
         sys.exit(1)
     return value
 
@@ -134,6 +142,7 @@ def build_config(args):
     appname = reject_unsafe(args.appname, 'appname') or 'rustdesk'
     compname = (reject_unsafe(args.compname, 'compname') or 'Purslane Ltd').replace('&', r'\&')
     androidappid = args.android_app_id or 'com.carriez.flutter_hbb'
+    accent_color = validate_hex_color(args.accent_color.upper(), 'accent-color')
 
     filename = re.sub(r'[^\w\s-]', '_', args.filename).strip().replace(' ', '_')
     if not filename or not all(ch.isascii() for ch in args.filename):
@@ -158,6 +167,7 @@ def build_config(args):
         "compname": compname,
         "androidappid": androidappid,
         "filename": filename,
+        "accentColor": accent_color,
     }
     return config
 
@@ -176,6 +186,7 @@ def main():
     p.add_argument('--download-link', default='', help='custom download URL')
     p.add_argument('--appname', default='', help='custom app name')
     p.add_argument('--compname', default='', help='company name for copyright')
+    p.add_argument('--accent-color', default='', help='hex RRGGBB accent color to patch into the Flutter UI (e.g. B5021B); leave empty to keep the default blue')
     p.add_argument('--android-app-id', default='', help='custom android app id')
     p.add_argument('--icon', default='', help='path to a square PNG icon')
     p.add_argument('--logo', default='', help='path to a square PNG logo')
